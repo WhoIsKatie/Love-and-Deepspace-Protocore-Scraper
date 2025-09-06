@@ -17,7 +17,7 @@ import ctypes
 import sys
 from time import sleep
 
-from cv2 import cv2
+import cv2
 
 sct = mss()     # Screenshot
 PARTS = 5
@@ -70,8 +70,8 @@ def select(img, msg):
         
     # Select from image
     rs = widgets.RectangleSelector(
-        ax, onselect, drawtype='box',
-        rectprops = dict(facecolor='red', edgecolor = 'black', alpha=0.5, fill=True))
+        ax, onselect,
+        props = dict(facecolor='red', edgecolor = 'black', alpha=0.5, fill=True))
 
     plt.show() # Close the window after this
     return rs.extents
@@ -79,7 +79,7 @@ def select(img, msg):
 # OCR procedures
 def image():
     # Screenshot then preprocess
-    img = np.array(sct.grab(sct.monitors[1]))
+    img = np.array(sct.grab(sct.monitors[2]))
     # img = img[::2, ::2, :] # Downscale
     img = img[:, :, :3]   # Remove alpha
     img = img[:, :, ::-1] # Reverse BGR <-> RGB
@@ -325,7 +325,7 @@ def read(coords):
 
 def main(argv):
 
-    print("Admin:", admin()) # Check for admin privileges
+    # print("Admin:", admin()) # Check for admin privileges
     # This is necessary as Genshin runs with admin privileges
     # Macro can't work on a window without equal privileges
 
@@ -348,11 +348,13 @@ def main(argv):
         # Recalibrate by selecting 1 region only
         if input("Recalibrate OCR? (y/[n]): ") == 'y':
             coords = calib(coords)
+            print(coords)
             np.savetxt(DIR + 'coords.txt', coords, fmt='%d')
         
         if input("Recalibrate mouse? (y/[n]): ") == 'y':
             start, delta = mouse()
             np.savetxt(DIR + 'mouse.txt', (start, delta), fmt='%d')
+            print((start, delta))
     
     print(f"\nPlease switch to your Genshin window.")
     print(f"Delay for 1s before start...")
