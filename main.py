@@ -21,12 +21,13 @@ import cv2
 
 sct = mss()     # Screenshot
 PARTS = 5
+DIST = 6
 
 # Configs
 LANG = tr.en()  # Language setting, placeholder
 DIR  = "./data/" # Output directory
 
-MENU    = [7,5,5]  # Menu dimension, x,y,page
+MENU    = [4,5,5]  # Menu dimension, x,y,page
 SCROLL  = 10*MENU[1]-1  # Scroll multiplier for page switch
 DEBUG   = False # Default logging mode
 SINGLE  = False # Do OCR on single artifact
@@ -67,7 +68,6 @@ def select(img, msg):
     fig = plt.figure(msg)
     ax = fig.add_subplot(111)
     plt_image=plt.imshow(img)
-        
     # Select from image
     rs = widgets.RectangleSelector(
         ax, onselect,
@@ -79,68 +79,52 @@ def select(img, msg):
 # OCR procedures
 def image():
     # Screenshot then preprocess
-    img = np.array(sct.grab(sct.monitors[2]))
+    img = np.array(sct.grab(sct.monitors[0]))
     # img = img[::2, ::2, :] # Downscale
     img = img[:, :, :3]   # Remove alpha
     img = img[:, :, ::-1] # Reverse BGR <-> RGB
     return img
 
-def calib(coords):
-    # Redefine all regions based on 1 region
+# Sets coordinates of first protocore's detail window in relation to protocore coords
+def calib(start):
     img = image()
-    old = coords[len(coords)-1] # Last line
-    
-    msg = "Select artifact colored area"
+
+    msg = "Select the first protocore's detail box (black rectangle that appears after clicking protocore)"
     new = np.array(select(img, msg), dtype=int)
     
-    # Remove old offset
-    coords[:, [0,1]] -= old[0] # x0 & x1 minus x1
-    coords[:, [2,3]] -= old[2] # y0 & y1 minus y1
-    
-    # Get width
-    fx = (new[1]-new[0])/(old[1] - old[0])
-    fy = (new[3]-new[2])/(old[3] - old[2])
-    
-    # Resize
-    coords[:, [0,1]] = (coords[:, [0,1]] * fx) # x0,x1 * fx
-    coords[:, [2,3]] = (coords[:, [2,3]] * fy) # y0,y1 * fy
-    
-    # Add new offset
-    coords[:, [0,1]] += new[0] # x0 & x1 plus new x0
-    coords[:, [2,3]] += new[2] # y0 & y1 plus new y0
-    print(new, old)
-    print(coords)
+    coords = np.array([new[0]-start[0], new[1]-start[0], new[2]-start[1], new[3]-start[1]])
     
     return coords.astype(int)
     
-def init():
-    # Determine the coords for each stat text
-    img = image()
-    coords = []
-    
-    msg = ["Select artifact type", 
-        "Select mainstat", 
-        "Select mainstat value", 
-        "Select level", 
-        "Select all substats & set name",
-        "Select artifact colored area"]
-        
-    # Start selection regions for each parts
-    # Plus 2 extra for future calibration
-    for x in range(PARTS+1):
-        coords.append(select(img, msg[x]))
-    
-    # Get the rs parameters
-    coords = np.array(coords, dtype=int)
-    
-    return coords
-    
-def ocr(coords, lang=tr.en()):  
+def ocr(start, startCol, coords, lang=tr.en()):  
     img = image()
     texts = ""
     
+    # The stats pop-up window is located to the right of the protocore if it is in column 0 or 1. Otherwise, it's to the left.
+    if startCol < 2:
+        coords[:2] += start[0]
+        coords[2:] += start[1]
+    else:
+        coords = [start[0] - coords[1], start[0] - coords[0], start[1] - coords[2], start[1] + coords[3]]
+    
+    crop = img[coords[2]:coords[3], coords[0]:coords[1], :]
+    plt_image=plt.imshow(crop) # Preview cropping
+    plt.show() # Close the window after this
+    
+    # Unsharp filter
+    gaussian = cv2.GaussianBlur(crop, (0, 0), 2.0)
+    crop = cv2.addWeighted(crop, 1.5, gaussian, -0.5, 0)
+    text = to_text(crop)
+    
+    log("########## RAW:\n"+ text)
+    
+    # Upscale
+    #crop = cv2.resize(crop, (0, 0), fx=4, fy=4)
+    # Grayscale
+    #crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    
     # Post-process (with special cases on certain regions)
-    for i in range(PARTS):
+    """ for i in range(PARTS):
         # Crop to regions
         crop = img[coords[i][2]:coords[i][3], coords[i][0]:coords[i][1], :]
         # plt_image=plt.imshow(crop) # Preview cropping
@@ -253,7 +237,7 @@ def ocr(coords, lang=tr.en()):
         texts += text
         
         # text = tesserocr.image_to_text()
-        log("########## RAW-"+str(i)+":\n"+ text)
+        log("########## RAW-"+str(i)+":\n"+ text) """
     
     return texts
     
@@ -279,6 +263,7 @@ def mouse():
     
     msg = "Select the first 2x2 tiles"
     tiles = np.array(select(img, msg), dtype=int)
+    print(tiles)
     
     # Distance to other tiles (x,y)
     delta = ((tiles[1]-tiles[0])/2, (tiles[3]-tiles[2])/2)
@@ -287,30 +272,14 @@ def mouse():
     
     return start, delta
 
-def admin():
-    # Check admin right, if not rerun with admin right.
-    # If the function succeeds, it returns a value greater than 32.
-    try:
-        status = ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        status = False
-        
-    if status:
-        return status
-    else:
-        print("Please run as administrator for macro to work.\n" +
-            "This is required because Genshin runs as admin.")
-        # Re-run the program with admin rights
-        # ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__.join(sys.argv), None, 1)
-
-def read(coords):
+def read(start, startCol, coords):
     # Get data on current artifact
     # Raw OCR
     lang = LANG
-    text = ocr(coords, lang)
+    text = ocr(start, startCol, coords, lang)
         
     # Parsing
-    print("########## PARSE:")
+    """ print("########## PARSE:")
     type, level, set, stats = rate.parse(text, lang)
     
     # Get rating (3 tuples in (score, relative))
@@ -320,43 +289,26 @@ def read(coords):
     pc = art.piece(type, level, set, stats)
     pc.set_score(score, main, sub)
     
-    return pc
+    return pc """
     
 
 def main(argv):
 
-    # print("Admin:", admin()) # Check for admin privileges
-    # This is necessary as Genshin runs with admin privileges
-    # Macro can't work on a window without equal privileges
-
-    coords = []     # x1,x2, y1,y2
-    # Ask to load prior settings
-    if input("Load coordinates? ([y]/n): ") == 'n':
-        # Start setting multiple crop regions
-        coords = init()
-        # Save data
-        np.savetxt(DIR + 'coords.txt', coords, fmt='%d')
+    # Load window size data (x1,x2, y1,y2)
+    coords = np.loadtxt(DIR + 'windowCoords.txt', dtype=int)
+    (start, delta) = np.loadtxt(DIR + 'mouse.txt', dtype=int)
         
-        # Mouse calibration
+    if input("Recalibrate mouse? (y/[n]): ") == 'y':
         start, delta = mouse()
         np.savetxt(DIR + 'mouse.txt', (start, delta), fmt='%d')
-    else:
-        # Load coords data
-        coords = np.loadtxt(DIR + 'coords.txt', dtype=int)
-        (start, delta) = np.loadtxt(DIR + 'mouse.txt', dtype=int)
-        
-        # Recalibrate by selecting 1 region only
-        if input("Recalibrate OCR? (y/[n]): ") == 'y':
-            coords = calib(coords)
-            print(coords)
-            np.savetxt(DIR + 'coords.txt', coords, fmt='%d')
-        
-        if input("Recalibrate mouse? (y/[n]): ") == 'y':
-            start, delta = mouse()
-            np.savetxt(DIR + 'mouse.txt', (start, delta), fmt='%d')
-            print((start, delta))
+        print((start, delta))
+                
+    # Recalibrate by selecting region of first protocore popup window only       
+    if input("Recalibrate OCR? (y/[n]): ") == 'y':
+        coords = calib(start)
+        np.savetxt(DIR + 'windowCoords.txt', coords, fmt='%d')
     
-    print(f"\nPlease switch to your Genshin window.")
+    print(f"\nPlease switch to your Love and Deepspace window.")
     print(f"Delay for 1s before start...")
     sleep(2)
     
@@ -372,8 +324,9 @@ def main(argv):
     
     if SINGLE:
         print("Single run.\n")
-        pc = read(coords)
-        pc.print()
+        read(start, 0, coords)
+        # pc = read(start, coords)
+        # pc.print()
         return # End program
     
     print("Full run.\n")
@@ -381,20 +334,27 @@ def main(argv):
     # Go through the whole menu
     pcs = []            # Compiled pieces
     pos = list(start)   # Mouse position
+    resetpos = [pos[0] - (delta[0]/2) - 20, pos[1]]
     for pg in range(MENU[2]):
         print(f"Page {pg}...")
         # input("Enter to continue...")
         for y in range(MENU[1]):
             for x in range(MENU[0]):
                 pyautogui.click(pos[0], pos[1])
-                
+                sleep(0.5)
                 # Get data for an artifact
-                pc = read(coords)
-                pc.print()
-                pcs.append(pc)
+                read(pos, x, coords)
+                # pc = read(pos, x, coords)
+                # pc.print()
+                # pcs.append(pc)
                 
                 # Next in line
+                print(f"before: {pos[0]}")
                 pos[0] += delta[0]
+                print(f"after: {pos[0]}")
+                
+                # close detail window/pop-up
+                pyautogui.click(resetpos[0], resetpos[1])
                 
             # Next row
             pos[0] = start[0]
@@ -412,24 +372,24 @@ def main(argv):
         pos = list(start)
 
     # Store externally
-    print("Saving data...")
-    with open(DIR + 'arts.pkl', 'wb') as f:
-        pickle.dump(pcs, f)
+    # print("Saving data...")
+    # with open(DIR + 'arts.pkl', 'wb') as f:
+    #     pickle.dump(pcs, f)
         
-    print("Saving csv...")
-    with open(DIR + 'arts.csv', 'w', newline="") as f:
-        writer = csv.writer(f, delimiter=';', quotechar='"')
-        for art in pcs:
-            # art.print()
-            writer.writerow(art.get_array())
+    # print("Saving csv...")
+    # with open(DIR + 'arts.csv', 'w', newline="") as f:
+    #     writer = csv.writer(f, delimiter=';', quotechar='"')
+    #     for art in pcs:
+    #         # art.print()
+    #         writer.writerow(art.get_array())
         
-    # Reload data
-    print("Test loading data...")
-    with open(DIR + 'arts.pkl', 'rb') as f:
-        load = pickle.load(f)
+    # # Reload data
+    # print("Test loading data...")
+    # with open(DIR + 'arts.pkl', 'rb') as f:
+    #     load = pickle.load(f)
 
-    # Check
-    load[0].print()
+    # # Check
+    # load[0].print()
     
     
 if __name__ == '__main__':
