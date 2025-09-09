@@ -99,17 +99,20 @@ def calib(start):
 def ocr(start, startCol, coords, lang=tr.en()):  
     img = image()
     texts = ""
+    offset = coords.copy()
     
     # The stats pop-up window is located to the right of the protocore if it is in column 0 or 1. Otherwise, it's to the left.
     if startCol < 2:
-        coords[:2] += start[0]
-        coords[2:] += start[1]
+        offset[:2] += start[0]
+        offset[2:] += start[1]
     else:
-        coords = [start[0] - coords[1], start[0] - coords[0], start[1] - coords[2], start[1] + coords[3]]
+        offset = [start[0] - offset[1], start[0] - offset[0], start[1] + offset[2], start[1] + offset[3]]
     
-    crop = img[coords[2]:coords[3], coords[0]:coords[1], :]
+    crop = img[offset[2]:offset[3], offset[0]:offset[1], :]
     plt_image=plt.imshow(crop) # Preview cropping
-    plt.show() # Close the window after this
+    plt.show(block=False) # Close the window after this
+    plt.pause(1)
+    plt.close()
     
     # Unsharp filter
     gaussian = cv2.GaussianBlur(crop, (0, 0), 2.0)
@@ -301,6 +304,7 @@ def main(argv):
     if input("Recalibrate mouse? (y/[n]): ") == 'y':
         start, delta = mouse()
         np.savetxt(DIR + 'mouse.txt', (start, delta), fmt='%d')
+        #TODO: convert start and delta into integers
         print((start, delta))
                 
     # Recalibrate by selecting region of first protocore popup window only       
@@ -349,9 +353,7 @@ def main(argv):
                 # pcs.append(pc)
                 
                 # Next in line
-                print(f"before: {pos[0]}")
                 pos[0] += delta[0]
-                print(f"after: {pos[0]}")
                 
                 # close detail window/pop-up
                 pyautogui.click(resetpos[0], resetpos[1])
@@ -366,7 +368,8 @@ def main(argv):
             continue
         for i in range(SCROLL):
             sleep(0.002)
-            pyautogui.scroll(-1)
+            #TODO: fix drag down mechanism so it can read more than 1 page of protocores
+            pyautogui.drag(-1)
         
         # Set pos to start at 2nd row
         pos = list(start)
